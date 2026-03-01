@@ -18,7 +18,8 @@ DYNADOT_Api="https://api.dynadot.com"
 
 #Usage: dns_dynadot_add   _acme-challenge.www.domain.com   "XKrxpRBosdIKFzxW_CT3KLZNf6q0HG9i01zxXp5CPBs"
 dns_dynadot_add() {
-  fulldomain=$1
+  #fulldomain=$1
+  fulldomain=$(echo "$1" | tr '[:upper:]' '[:lower:]')
   txtvalue=$2
   _info "Using dynadnot dns api"
   _debug fulldomain "$fulldomain"
@@ -38,28 +39,43 @@ dns_dynadot_add() {
     _err "invalid domain"
     return 1
   fi
-  
 
-  _subdomain="${fulldomain%.$_domain}"
-
+  #_subdomain="${fulldomain%.$_domain}"
+  _subdomain="${fulldomain%."$_domain"}"
 
   _info "Adding txt record to subdomain $_subdomain"
-  if _dynadot_rest POST "/restful/v2/domains/$_domain/records" "{\"dns_main_list\": [{}], \"sub_list\": [{\"sub_host\": \"$_subdomain\", \"record_type\": \"txt\", \"record_value1\": \"$txtvalue\" }], \"ttl\": 60, \"add_dns_to_current_setting\": true}"; then
-    if _contains "$response" "\"message\":\"Success\"" >/dev/null; then
+
+  while true; do
+    _dynadot_rest POST "/restful/v2/domains/$_domain/records" "{\"dns_main_list\": [{}], \"sub_list\": [{\"sub_host\": \"$_subdomain\", \"record_type\": \"txt\", \"record_value1\": \"$txtvalue\" }], \"ttl\": 60, \"add_dns_to_current_setting\": true}"
+    if _contains "$response" "try again later" >/dev/null; then
+      _debug "system busy. try again in 1min"
+      sleep 1m
+      continue
+    elif _contains "$response" "\"message\":\"Success\"" >/dev/null; then
       _info "Added, OK"
       return 0
     else
       _err "Adding txt record error."
       return 1
     fi
-  else
-    _err "Adding txt record error."
-  fi
+  done
+
+  #  if _dynadot_rest POST "/restful/v2/domains/$_domain/records" "{\"dns_main_list\": [{}], \"sub_list\": [{\"sub_host\": \"$_subdomain\", \"record_type\": \"txt\", \"record_value1\": \"$txtvalue\" }], \"ttl\": 60, \"add_dns_to_current_setting\": true}"; then
+  #    if _contains "$response" "\"message\":\"Success\"" >/dev/null; then
+  #      _info "Added, OK"
+  #      return 0
+  #    else
+  #      _err "Adding txt record error."
+  #      return 1
+  #    fi
+  #  else
+  #    _err "Adding txt record error."
+  #  fi
 }
 
-
 dns_dynadot_rm() {
-  fulldomain=$1
+  #fulldomain=$1
+  fulldomain=$(echo "$1" | tr '[:upper:]' '[:lower:]')
   txtvalue=$2
   _info "Using dynadnot dns api"
   _debug fulldomain "$fulldomain"
@@ -80,7 +96,8 @@ dns_dynadot_rm() {
     return 1
   fi
 
-  _subdomain="${fulldomain%.$_domain}"
+  #_subdomain="${fulldomain%.$_domain}"
+  _subdomain="${fulldomain%."$_domain"}"
 
   _debug "Getting txt records"
   _debug _domain "$_domain"
@@ -91,8 +108,8 @@ dns_dynadot_rm() {
     return 1
   fi
 
-  _main_domains=$(echo $response | _egrep_o '"main_domains":\[[^]]+\]' | cut -d: -f2- | sed 's/"value":/"record_value1":/g')
-  _sub_domains=$(echo $response | _egrep_o '"sub_domains":\[[^]]*\]' | cut -d: -f2-)
+  _main_domains=$(echo "$response" | _egrep_o '"main_domains":\[[^]]+\]' | cut -d: -f2- | sed 's/"value":/"record_value1":/g')
+  _sub_domains=$(echo "$response" | _egrep_o '"sub_domains":\[[^]]*\]' | cut -d: -f2-)
   _sub_domains_filtered=$(echo "$_sub_domains" | sed -E "s/\{\"sub_host\":\"$_subdomain\",\"record_type\":\"txt\",\"value\":\"$txtvalue\"\},?//g; s/,]/]/g" | sed 's/"value":/"record_value1":/g')
 
   # fallback as main domain cannot be empty
@@ -102,24 +119,38 @@ dns_dynadot_rm() {
   # empty subdomain
   _sub_domains_filtered=${_sub_domains_filtered:-[]}
 
-  json_output=$(printf '{"dns_main_list":%s,"sub_list":%s}' "$_main_domains" "$_sub_domains_filtered")
+  json_output=$(printf '{"dns_main_list":%s,"sub_list":%s,"ttl":60}' "$_main_domains" "$_sub_domains_filtered")
 
   _info "updating records"
 
-  if _dynadot_rest POST "/restful/v2/domains/$_domain/records" $json_output; then
-    if _contains "$response" "\"message\":\"Success\"" >/dev/null; then
+  while true; do
+    _dynadot_rest POST "/restful/v2/domains/$_domain/records" "$json_output"
+    if _contains "$response" "try again later" >/dev/null; then
+      _debug "system busy. try again in 1min"
+      sleep 1m
+      continue
+    elif _contains "$response" "\"message\":\"Success\"" >/dev/null; then
       _info "sucessfully removed txt record"
+      sleep 1m
       return 0
     else
       _err "updating txt record error."
       return 1
     fi
-  else
-    _err "updating txt record error."
-  fi
+  done
+
+  #  if _dynadot_rest POST "/restful/v2/domains/$_domain/records" $json_output; then
+  #    if _contains "$response" "\"message\":\"Success\"" >/dev/null; then
+  #      _info "sucessfully removed txt record"
+  #      return 0
+  #    else
+  #      _err "updating txt record error."
+  #      return 1
+  #    fi
+  #  else
+  #    _err "updating txt record error."
+  #  fi
 }
-
-
 
 ####################  Private functions below ##################################
 
@@ -130,7 +161,7 @@ _dynadot_rest() {
   _debug "$path"
 
   xRequestId=$(uuidgen)
-  xSignature=$(printf '%s\n%s\n%s\n%s' "$DYNADOT_Key" "$path" "$xRequestId" "$data" | openssl dgst -sha256 -hmac $DYNADOT_Secret -binary | openssl base64 -e -A)
+  xSignature=$(printf '%s\n%s\n%s\n%s' "$DYNADOT_Key" "$path" "$xRequestId" "$data" | openssl dgst -sha256 -hmac "$DYNADOT_Secret" -binary | openssl base64 -e -A)
 
   export _H1="Content-Type: application/json"
   export _H2="Accept: application/json"
@@ -138,8 +169,7 @@ _dynadot_rest() {
   export _H4="X-Request-ID: $xRequestId"
   export _H5="X-Signature: $xSignature"
 
-
-  if [ "$m" != "GET" ]; then
+  if [ "$method" != "GET" ]; then
     _debug data "$data"
     response="$(_post "$data" "$DYNADOT_Api$path" "" "$method")"
   else
@@ -147,7 +177,7 @@ _dynadot_rest() {
   fi
 
   if [ "$?" != "0" ]; then
-    _err "error $ep"
+    _err "error $response"
     return 1
   fi
   _debug2 response "$response"
