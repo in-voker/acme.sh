@@ -131,7 +131,6 @@ dns_dynadot_rm() {
       continue
     elif _contains "$response" "\"message\":\"Success\"" >/dev/null; then
       _info "sucessfully removed txt record"
-      sleep 1m
       return 0
     else
       _err "updating txt record error."
